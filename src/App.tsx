@@ -18,12 +18,14 @@ import {
   ChevronRight,
   ClipboardCheck,
   Copy,
+  Download,
   Eye,
   FileCheck2,
   FileText,
   Highlighter,
   Layers3,
   Menu,
+  PackageCheck,
   PanelLeftClose,
   ScanSearch,
   ShieldCheck,
@@ -36,6 +38,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { Badge, Button, Card, Dialog, Tabs, X } from './components/ui';
 import { useDisclosureStore, type DisclosureRecord } from './store';
+import { buildReleasePackage, verifyBatch, type ChangedDocument, type ReleaseBatch } from './batch';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -264,6 +267,27 @@ function ReviewPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reason, setReason] = useState('商业秘密');
   const [privilege, setPrivilege] = useState('合同保密');
+  // 版本冲突：baseVersion 是当前编辑所基于的草稿版本，保存时校验。
+  const [baseVersion, setBaseVersion] = useState(doc.version);
+  const [conflict, setConflict] = useState<{ currentVersion: number } | null>(null);
+  useEffect(() => { setBaseVersion(doc.version); }, [doc.id]);
+  const stale = doc.version !== baseVersion;
+
+  const handleDraw = (region: { x: number; y: number; width: number; height: number }) => {
+    const result = store.addRedaction({ ...region, page: activePage, reason, privilege }, baseVersion);
+    if (result.ok) setBaseVersion(result.version);
+    else setConflict({ currentVersion: result.currentVersion });
+  };
+  const handleConfirm = (id: string) => {
+    const result = store.confirmRedaction(id, baseVersion);
+    if (result.ok) setBaseVersion(result.version);
+    else setConflict({ currentVersion: result.currentVersion });
+  };
+  const handleClassification = (classification: DisclosureRecord['classification']) => {
+    const result = store.updateClassification(classification, baseVersion);
+    if (result.ok) setBaseVersion(result.version);
+    else setConflict({ currentVersion: result.currentVersion });
+  };
   return (
     <div className="page review-page">
       <header className="review-header">
@@ -278,6 +302,13 @@ function ReviewPage() {
           <Button><Check size={16} /> 提交质检</Button>
         </div>
       </header>
+      {stale && (
+        <div className="stale-banner">
+          <AlertTriangle size={15} />
+          <span>该文档已在其他窗口更新（v{baseVersion} → v{doc.version}）。继续保存会产生版本冲突，请重新加载后再编辑。</span>
+          <Button variant="outline" onClick={() => setBaseVersion(doc.version)}>重新加载</Button>
+        </div>
+      )}
       <div className="review-layout">
         <aside className="page-thumbs">
           <div className="side-label">页级预览 <span>{doc.pages} 页</span></div>
@@ -297,7 +328,7 @@ function ReviewPage() {
           <div className="pdf-stage">
             <PdfPage
               pageNumber={activePage}
-              onDraw={redactionMode ? (region) => store.addRedaction({ ...region, page: activePage, reason, privilege }) : undefined}
+              onDraw={redactionMode ? handleDraw : undefined}
             />
             {pageRegions.map((region) => (
               <button
@@ -315,12 +346,12 @@ function ReviewPage() {
           {active ? (
             <>
               <div className="inspector-title"><strong>{active.reason}</strong><Badge tone={active.status === 'confirmed' ? 'green' : 'amber'}>{active.status === 'confirmed' ? '已确认' : '草稿'}</Badge></div>
-              <label>保密级别<select value={doc.classification} onChange={(event) => store.updateClassification(event.target.value as DisclosureRecord['classification'])}><option>内部</option><option>机密</option><option>严格机密</option></select></label>
+              <label>保密级别<select value={doc.classification} onChange={(event) => handleClassification(event.target.value as DisclosureRecord['classification'])}><option>内部</option><option>机密</option><option>严格机密</option></select></label>
               <label>去密原因<input value={active.reason} readOnly /></label>
               <label>特权标签<input value={active.privilege} readOnly /></label>
               <label>责任人员<input value={doc.owner} readOnly /></label>
               <div className="coordinate-grid"><div><span>X</span><b>{Math.round(active.x * 100)}%</b></div><div><span>Y</span><b>{Math.round(active.y * 100)}%</b></div><div><span>宽</span><b>{Math.round(active.width * 100)}%</b></div><div><span>高</span><b>{Math.round(active.height * 100)}%</b></div></div>
-              <Button onClick={() => store.confirmRedaction(active.id)} disabled={active.status === 'confirmed'}><Check size={15} /> 确认此区域</Button>
+              <Button onClick={() => handleConfirm(active.id)} disabled={active.status === 'confirmed'}><Check size={15} /> 确认此区域</Button>
               <Button variant="outline"><Copy size={15} /> 批量复制到同类页</Button>
             </>
           ) : <p className="muted">在文档页面上选择一个去密区域查看属性。</p>}
@@ -339,6 +370,22 @@ function ReviewPage() {
               <p className={doc.redactions.some((item) => item.status === 'draft') ? 'failed' : ''}><AlertTriangle /> {doc.redactions.some((item) => item.status === 'draft') ? '仍有未确认区域' : '所有区域已确认'}</p>
             </div>
             <Dialog.Close asChild><Button>返回检查 <X size={15} /></Button></Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+      <Dialog.Root open={!!conflict} onOpenChange={(open) => !open && setConflict(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title>保存被版本冲突挡住</Dialog.Title>
+            <Dialog.Description>
+              该文档已在其他窗口被修改（当前版本 v{conflict?.currentVersion}，你的编辑基于 v{baseVersion}）。
+              为避免覆盖先保存的内容，本次修改未生效。
+            </Dialog.Description>
+            <div className="dialog-actions">
+              <Button onClick={() => { setBaseVersion(doc.version); setConflict(null); }}>重新加载并继续</Button>
+              <Button variant="outline" onClick={() => setConflict(null)}>关闭</Button>
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
@@ -375,24 +422,166 @@ function QualityPage() {
   );
 }
 
+const CHECK_LABELS: Record<string, string> = {
+  'forbidden-terms': '全文禁词与姓名复核',
+  'page-number': '页序与页码连续性',
+  'image-boundary': '图像边界残片',
+  'metadata': '文档元数据清理'
+};
+
+function downloadPackage(batch: ReleaseBatch, content: string) {
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${batch.id}-release-package.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function BatchesPage() {
-  const { documents } = useDisclosureStore();
+  const documents = useDisclosureStore((state) => state.documents);
+  const batches = useDisclosureStore((state) => state.batches);
+  const store = useDisclosureStore();
   const [selected, setSelected] = useState<string[]>(['DOC-00418']);
-  const activeDoc = documents.find((doc) => doc.id === selected[0]) ?? documents[0];
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(batches[0]?.id ?? null);
+  const [exportError, setExportError] = useState<ChangedDocument[] | null>(null);
+
+  const activeBatch = batches.find((batch) => batch.id === activeBatchId) ?? null;
+  const verification = activeBatch ? verifyBatch(activeBatch, documents) : null;
+  const batchValid = verification?.valid ?? false;
+  const batchReleased = activeBatch?.status === 'released';
+
+  const toggleDoc = (id: string) => setSelected((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+
+  const handleCreate = () => {
+    if (selected.length === 0) return;
+    const name = `发布批次 ${new Date().toLocaleString('zh-CN', { hour12: false })}`;
+    const batch = store.createBatch(name, selected);
+    setActiveBatchId(batch.id);
+  };
+
+  const handleExport = () => {
+    if (!activeBatch) return;
+    const result = store.exportBatch(activeBatch.id);
+    if (!result.ok) {
+      setExportError(result.changed);
+      return;
+    }
+    downloadPackage(result.batch, buildReleasePackage(result.batch));
+  };
+
   return (
     <div className="page">
-      <header className="page-heading"><div><small>RELEASE BATCH / TAXONOMY</small><h1>发布批次与标签</h1><p>按案件问题、辖区和披露对象组织文档，生成可追溯发布清单。</p></div><Button>生成发布包</Button></header>
+      <header className="page-heading">
+        <div><small>RELEASE BATCH / TAXONOMY</small><h1>发布批次与标签</h1><p>冻结所选文档的密级、确认区域与复核项；文档一旦改动，原批次即失效，需复核后另建新批次。</p></div>
+        <Button onClick={handleCreate} disabled={selected.length === 0}><PackageCheck size={16} /> 生成发布包（冻结所选文档）</Button>
+      </header>
       <div className="batch-layout">
-        <Card className="batch-list"><div className="card-title"><Layers3 size={17} /><strong>发布批次</strong></div>{['第一批披露 · 审阅中', '第二批披露 · 编制中', '专家材料 · 待补充'].map((name, index) => <button key={name} className={index === 0 ? 'active' : ''}><span>BATCH-{String(index + 1).padStart(2, '0')}</span><strong>{name}</strong><small>{[48, 79, 19][index]} 份文档</small></button>)}</Card>
+        <Card className="batch-list">
+          <div className="card-title"><Layers3 size={17} /><strong>发布批次</strong><span>{batches.length} 批</span></div>
+          {batches.length === 0 && <p className="muted">尚未生成批次。</p>}
+          {batches.map((batch) => {
+            const itemVerification = verifyBatch(batch, documents);
+            const valid = itemVerification.valid;
+            return (
+              <button key={batch.id} className={activeBatchId === batch.id ? 'active' : ''} onClick={() => setActiveBatchId(batch.id)}>
+                <span>{batch.id}</span>
+                <strong>{batch.name}</strong>
+                <small>{batch.snapshots.length} 份文档 · {batch.createdAt}</small>
+                <Badge tone={batch.status === 'released' ? 'green' : valid ? 'blue' : 'red'}>
+                  {batch.status === 'released' ? '已导出' : valid ? '已冻结' : '已失效'}
+                </Badge>
+              </button>
+            );
+          })}
+        </Card>
         <Card className="batch-content">
           <div className="card-title"><Tags size={17} /><strong>文档与案件问题映射</strong><span>{selected.length} 已选择</span></div>
           <div className="batch-table">
-            {documents.map((doc) => <label key={doc.id} className="batch-row"><input type="checkbox" checked={selected.includes(doc.id)} onChange={() => setSelected((ids) => ids.includes(doc.id) ? ids.filter((id) => id !== doc.id) : [...ids, doc.id])} /><FileText size={17} /><div><strong>{doc.title}</strong><span>{doc.id} · {doc.issue}</span></div><Badge tone={doc.status === '可发布' ? 'green' : 'amber'}>{doc.status}</Badge></label>)}
+            {documents.map((doc) => (
+              <label key={doc.id} className="batch-row">
+                <input type="checkbox" checked={selected.includes(doc.id)} onChange={() => toggleDoc(doc.id)} />
+                <FileText size={17} />
+                <div><strong>{doc.title}</strong><span>{doc.id} · {doc.issue} · v{doc.version}</span></div>
+                <Badge tone={doc.status === '可发布' ? 'green' : 'amber'}>{doc.status}</Badge>
+              </label>
+            ))}
           </div>
-          <div className="tag-editor"><h3>标签与分发级</h3><div className="tag-options">{(['合同问题', '设备缺陷', '现场安全', '损害赔偿', '仅律师可见']).map((tag, index) => <span key={tag} className={index < 3 ? 'selected' : ''}>{tag}</span>)}</div><label>导出清单说明<textarea defaultValue="按案卷编号升序导出，保留去密版本、操作者与审批时间。" /></label><Button>保存批次设置</Button></div>
+          <div className="tag-editor">
+            <h3>标签与分发级</h3>
+            <div className="tag-options">{(['合同问题', '设备缺陷', '现场安全', '损害赔偿', '仅律师可见']).map((tag, index) => <span key={tag} className={index < 3 ? 'selected' : ''}>{tag}</span>)}</div>
+            <label>导出清单说明<textarea defaultValue="按案卷编号升序导出，保留冻结版本、密级、确认区域与复核结论。" /></label>
+            <Button onClick={handleCreate} disabled={selected.length === 0}><PackageCheck size={16} /> 冻结所选文档并生成批次</Button>
+          </div>
         </Card>
-        <Card className="batch-summary"><div className="side-label">当前批次摘要</div><strong>{activeDoc.bundle}</strong><dl><div><dt>文档</dt><dd>{selected.length}</dd></div><div><dt>页数</dt><dd>{selected.reduce((sum, id) => sum + (documents.find((doc) => doc.id === id)?.pages ?? 0), 0)}</dd></div><div><dt>风险项</dt><dd>4</dd></div></dl><div className="summary-note"><AlertTriangle size={15} /><span>发布前仍需完成 4 项双人复核。</span></div></Card>
+        <Card className="batch-summary">
+          <div className="side-label">批次摘要</div>
+          {activeBatch ? (
+            <>
+              <strong>{activeBatch.name}</strong>
+              <dl>
+                <div><dt>批次编号</dt><dd>{activeBatch.id}</dd></div>
+                <div><dt>文档</dt><dd>{activeBatch.snapshots.length}</dd></div>
+                <div><dt>冻结时间</dt><dd>{activeBatch.createdAt}</dd></div>
+                <div><dt>状态</dt><dd><Badge tone={batchReleased ? 'green' : batchValid ? 'blue' : 'red'}>{batchReleased ? '已导出' : batchValid ? '已冻结 · 可导出' : '已失效'}</Badge></dd></div>
+              </dl>
+              <div className="snapshot-list">
+                <div className="snapshot-list-title">冻结快照（密级 / 确认区域）</div>
+                {activeBatch.snapshots.map((snapshot) => (
+                  <div key={snapshot.documentId} className="snapshot-row">
+                    <div><strong>{snapshot.title}</strong><span>{snapshot.documentId} · v{snapshot.version} · {snapshot.owner}</span></div>
+                    <div className="snapshot-meta">
+                      <Badge tone={snapshot.classification === '严格机密' ? 'red' : snapshot.classification === '机密' ? 'amber' : 'neutral'}>{snapshot.classification}</Badge>
+                      <span>{snapshot.confirmedCount}/{snapshot.redactions.length} 区域已确认</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="review-snapshot">
+                <div className="snapshot-list-title">冻结复核项</div>
+                <ul>
+                  {Object.entries(activeBatch.reviewItems.checks).map(([key, value]) => (
+                    <li key={key} className={value ? 'on' : ''}>{value ? '✓' : '○'} {CHECK_LABELS[key] ?? key}</li>
+                  ))}
+                  <li className={activeBatch.reviewItems.metadataCleaned ? 'on' : ''}>{activeBatch.reviewItems.metadataCleaned ? '✓' : '○'} 已确认元数据清理</li>
+                </ul>
+              </div>
+              {!batchValid && verification && !verification.valid && (
+                <div className="export-blocked">
+                  <AlertTriangle size={15} />
+                  <div><strong>文档已变更，原批次失效</strong><span>{verification.changed.map((item) => item.title).join('、')} 已在冻结后被修改。请重新审阅后生成新批次。</span></div>
+                </div>
+              )}
+              {batchReleased ? (
+                <Button variant="outline" onClick={handleExport}><Download size={16} /> 重新导出发布包</Button>
+              ) : (
+                <Button onClick={handleExport} disabled={!batchValid}><Download size={16} /> 导出发布包</Button>
+              )}
+              {!batchValid && <p className="muted export-hint">导出已挡住：批次冻结后文档发生改动。</p>}
+            </>
+          ) : <p className="muted">选择或生成一个批次查看冻结快照。</p>}
+        </Card>
       </div>
+      <Dialog.Root open={!!exportError} onOpenChange={(open) => !open && setExportError(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content">
+            <Dialog.Title>批次已失效，导出已挡住</Dialog.Title>
+            <Dialog.Description>
+              以下文档在批次冻结后被修改（密级或去密区域），原批次不再可导出。请重新审阅并生成新批次，旧批次仍可在此查阅。
+            </Dialog.Description>
+            <div className="dialog-checks">
+              {exportError?.map((item) => (
+                <p key={item.documentId} className="failed"><AlertTriangle /> {item.title}（v{item.fromVersion} → v{item.toVersion}）</p>
+              ))}
+            </div>
+            <Dialog.Close asChild><Button>知道了 <X size={15} /></Button></Dialog.Close>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }

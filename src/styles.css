@@ -186,6 +186,40 @@ button { cursor: pointer; }
 .summary-note { display: flex; gap: 7px; color: #8d5816; font-size: 11px; padding: 11px; background: #fff5e4; border-radius: 4px; margin-top: 14px; }
 .muted { color: #79858f; font-size: 12px; }
 
+/* 版本冲突：文档已在其他窗口更新的提示条 */
+.stale-banner { display: flex; align-items: center; gap: 10px; background: #fff5e4; border-bottom: 1px solid #f1d8af; color: #8d5816; font-size: 12px; line-height: 1.5; padding: 9px 16px; }
+.stale-banner .button { height: 30px; margin-left: auto; flex: none; }
+
+/* 批次列表状态徽标 */
+.batch-list .badge { margin-top: 7px; }
+
+/* 冻结快照 */
+.snapshot-list { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.snapshot-list-title { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #7c8790; margin-bottom: 8px; }
+.snapshot-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #edf0f2; }
+.snapshot-row:last-child { border-bottom: 0; }
+.snapshot-row strong, .snapshot-row span { display: block; }
+.snapshot-row strong { font-size: 12px; }
+.snapshot-row span { font-size: 10px; color: #7b8790; margin-top: 3px; }
+.snapshot-meta { display: flex; align-items: center; gap: 8px; flex: none; }
+.snapshot-meta span { font-size: 10px; color: #7b8790; }
+
+/* 冻结复核项 */
+.review-snapshot { margin-top: 12px; }
+.review-snapshot ul { list-style: none; margin: 0; padding: 0; }
+.review-snapshot li { font-size: 11px; color: #8a949d; padding: 4px 0; }
+.review-snapshot li.on { color: #285f4a; font-weight: 600; }
+
+/* 导出被挡住 */
+.export-blocked { display: flex; gap: 9px; background: #fdebec; border: 1px solid #f3c1c4; color: #a82e35; border-radius: 5px; padding: 10px; margin-top: 14px; font-size: 11px; line-height: 1.5; }
+.export-blocked svg { flex: none; margin-top: 1px; }
+.export-blocked strong, .export-blocked span { display: block; }
+.export-blocked span { color: #8a5a5d; margin-top: 2px; }
+.export-hint { margin: 8px 0 0; }
+
+/* 冲突对话框操作区 */
+.dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
 @media (max-width: 1100px) {
   .document-row { grid-template-columns: 38px minmax(200px, 1fr) 88px 80px 72px; }
   .document-row .doc-field:nth-of-type(3) { display: none; }
