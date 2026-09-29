@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 62059",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 62059"
+    "preview": "vite preview --host 0.0.0.0 --port 62059",
+    "verify:freeze": "node scripts/verify-freeze-flow.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",
